@@ -153,6 +153,8 @@ void PersonFollower::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr 
 
   double angle_R = angle_L + PI / 2; // Robot Frame angle
 
+  angle_R = std::atan2(std::sin(angle_R), std::cos(angle_R)); // Normalize angle to [-pi, pi]
+
   RCLCPP_INFO(this->get_logger(), "angle_L=%.3f angle_R=%.3f min_value=%.3f", angle_L, angle_R, min_value);
 
   /*
@@ -162,7 +164,7 @@ void PersonFollower::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr 
   */
   geometry_msgs::msg::Twist cmd_vel_msg;
   // Checks if the minimum value detected by the LiDAR is less than 12 meters. If true, it proceeds to calculate control commands based on this information; otherwise, it handles the case where no object is detected.
-  if (min_value >= 0.2 && min_value < 12)
+  if (min_value < 12)
   {
     // Assign angular and linear velocities
     cmd_vel_msg.angular.z = angle_control_gain_ * (angle_R - following_angle_);
