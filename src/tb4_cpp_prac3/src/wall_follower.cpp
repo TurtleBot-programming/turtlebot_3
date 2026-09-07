@@ -214,6 +214,11 @@ If min_value<12, the lidar sensor has a valid measurement.
             cmd_vel_msg.angular.z = omega;
         }
     }
+    else
+    {
+        RCLCPP_INFO(this->get_logger(), "No Object is Detected");
+        cmd_vel_msg.linear.x = 0.0; // stop the robot
+    }
     cmd_vel_publisher_->publish(cmd_vel_msg);
 }
 
