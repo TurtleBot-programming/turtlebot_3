@@ -1,0 +1,244 @@
+#include <chrono>
+#include <functional>
+#include <memory>
+#include <string>
+#include <algorithm>
+#include <vector>
+
+#include "rclcpp/rclcpp.hpp"
+#include "geometry_msgs/msg/twist.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
+#define PI 3.14159265358
+using rcl_interfaces::msg::ParameterType;
+
+class PersonFollower : public rclcpp::Node
+{
+public:
+  PersonFollower() : Node("person_follower")
+  {
+    /*TODO TASK 2 - MILESTONE #1.2
+    1. Declare all parameters used for configuring the "following distance", "following angle", and all control gains. Their default values should be given as well.
+    2. Get all parameter values from the constructor, and save them to private class element variables.
+    3. Print all parameter values here.
+    */
+
+    // Declare parameters
+    this->declare_parameter<double>("following_distance", 1.0);
+    this->declare_parameter<double>("following_angle", 0);
+    this->declare_parameter<double>("angle_control_gain", 1.0);
+    this->declare_parameter<double>("distance_control_gain", 0.5);
+
+    // Get parameter values
+    this->get_parameter("following_distance", following_distance_);
+    this->get_parameter("following_angle", following_angle_);
+    this->get_parameter("angle_control_gain", angle_control_gain_);
+    this->get_parameter("distance_control_gain", distance_control_gain_);
+
+    // Print parameter values
+    RCLCPP_INFO(this->get_logger(), "following_distance: %.2f", following_distance_);
+    RCLCPP_INFO(this->get_logger(), "following_angle: %.2f", following_angle_);
+    RCLCPP_INFO(this->get_logger(), "angle_control_gain: %.2f", angle_control_gain_);
+    RCLCPP_INFO(this->get_logger(), "distance_control_gain: %.2f", distance_control_gain_);
+
+    //  Initalise the dynamic parameter handler
+    dyn_params_handler_ = this->add_on_set_parameters_callback(
+        std::bind(
+            &PersonFollower::dynamicParametersCallback,
+            this, std::placeholders::_1));
+
+    // Publisher for the topic /cmd_vel
+    this->cmd_vel_publisher_ = this->create_publisher<geometry_msgs::msg::Twist>(
+        "/cmd_vel",
+        rclcpp::SystemDefaultsQoS());
+    using namespace std::placeholders;
+    // Subsriber to the /scan topic
+    this->scan_subscriber_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+        "/scan",
+        rclcpp::SensorDataQoS(),
+        std::bind(&PersonFollower::scan_callback, this, _1));
+    RCLCPP_INFO(this->get_logger(), "Subscribed to topic: %s", scan_subscriber_->get_topic_name());
+  }
+
+private:
+  // Define a command velocity publisher
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_publisher_;
+  // Define a laser scan subscriber
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_subscriber_;
+  // laser scan topic message pointer
+  sensor_msgs::msg::LaserScan::SharedPtr scan_;
+  std::recursive_mutex mutex_;
+
+  /* TODO TASK 1 - MILESTONE #1.1
+    Define all private element variables to store parameters.
+  */
+  double following_distance_;
+  double following_angle_;
+  double angle_control_gain_;
+  double distance_control_gain_;
+
+  // Define Dynamic parameters handler
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr dyn_params_handler_;
+
+  /**
+   * @brief Callback executed when a parameter change is detected
+   * @param event ParameterEvent message
+   */
+  rcl_interfaces::msg::SetParametersResult
+  dynamicParametersCallback(std::vector<rclcpp::Parameter> parameters);
+
+  void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr scan_msg);
+};
+
+void PersonFollower::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr scan_msg)
+{
+  std::lock_guard<std::recursive_mutex> cfl(mutex_);
+
+  // DEBUG: sensor frame + scan geometry — confirms sensor origin/frame and sweep params
+  RCLCPP_INFO(this->get_logger(),
+              "frame_id=%s angle_min=%.3f angle_max=%.3f angle_inc=%.5f range_min=%.3f range_max=%.3f ranges.size()=%zu",
+              scan_msg->header.frame_id.c_str(),
+              scan_msg->angle_min, scan_msg->angle_max, scan_msg->angle_increment,
+              scan_msg->range_min, scan_msg->range_max,
+              scan_msg->ranges.size());
+  /*TODO TASKS
+
+    MILESTONE #3.1 - Process the received scan_msg to get the location of the closest object in robot's environment.
+      NOTE: the four pillars of will be visible from the Lidar sensor, you have to remove the distance
+      measurements of these four pillars by ignoring any measurement less than 0.2 meter.
+   */
+
+  auto raw_min = *std::min_element(scan_msg->ranges.begin(), scan_msg->ranges.end());
+  auto raw_max = *std::max_element(scan_msg->ranges.begin(), scan_msg->ranges.end());
+  RCLCPP_INFO(this->get_logger(), "raw_min=%.3f raw_max=%.3f", raw_min, raw_max);
+
+  int below_cutoff = std::count_if(scan_msg->ranges.begin(), scan_msg->ranges.end(),
+                                   [](float range)
+                                   { return range < 0.2f; });
+  RCLCPP_INFO(this->get_logger(), "below_cutoff_count=%d / %zu", below_cutoff, scan_msg->ranges.size());
+
+  auto valid_distances = [](double a, double b)
+  {
+    if (a < 0.2)
+      return false; // if a is less than 0.2, choose b
+    if (b < 0.2)
+      return true; // if b is less than 0.2, choose a
+    return a < b;
+  };
+  // finds the minimum element in the ranges vector of the scan_msg. It returns an iterator (min_distance) pointing to the smallest value in the range.
+  auto min_distance = std::min_element(scan_msg->ranges.begin(), scan_msg->ranges.end(), valid_distances); // chose closest object
+
+  // Extracts the actual minimum value from the iterator obtained in the previous step.
+  float min_value = *min_distance;
+
+  // Calculates the index of the minimum value in the ranges vector by finding the distance between the beginning of the vector and the iterator pointing to the minimum value.
+  int min_index = std::distance(scan_msg->ranges.begin(), min_distance);
+
+  // DEBUG: sample a spread of ranges across the array, not just the min
+  {
+    size_t n = scan_msg->ranges.size();
+    RCLCPP_INFO(this->get_logger(),
+                "ranges[0]=%.3f ranges[%zu]=%.3f ranges[%zu]=%.3f ranges[last]=%.3f",
+                scan_msg->ranges[0],
+                n / 4, scan_msg->ranges[n / 4],
+                n / 2, scan_msg->ranges[n / 2],
+                scan_msg->ranges[n - 1]);
+  }
+
+  /*
+    MILESTONE #3.2. You have to calculate the bearing and the range of the closest object with respect to the robot frame. You have
+    to check the LaserScan message definition, and how the Lidar sensor is mounted with respective to
+    the robot's coordinate.
+    */
+  double angle_L = scan_msg->angle_min + (min_index * scan_msg->angle_increment); // Lidar Frame angle
+
+  double angle_R = angle_L + PI / 2; // Robot Frame angle
+
+  RCLCPP_INFO(this->get_logger(), "angle_L=%.3f angle_R=%.3f min_value=%.3f", angle_L, angle_R, min_value);
+
+  /*
+    MILESTONE #3.3. Write a Person Follow Reactive Control that takes the bearing and range information of the closest
+    object in the environment as the input and publish a message on topic /cmd_vel to control the motion of
+    the robot.
+  */
+  geometry_msgs::msg::Twist cmd_vel_msg;
+  // Checks if the minimum value detected by the LiDAR is less than 12 meters. If true, it proceeds to calculate control commands based on this information; otherwise, it handles the case where no object is detected.
+  if (min_value >= 0.2 && min_value < 12)
+  {
+    // Assign angular and linear velocities
+    cmd_vel_msg.angular.z = angle_control_gain_ * (angle_R - following_angle_);
+
+    cmd_vel_msg.linear.x = std::max(0.0, distance_control_gain_ * (min_value - following_distance_));
+  }
+  else
+  {
+    RCLCPP_INFO(this->get_logger(), "No Object is Detected");
+    cmd_vel_msg.linear.x = 0.0;  // stop the robot
+    cmd_vel_msg.angular.z = 0.0; // stop the robot
+  }
+
+  cmd_vel_publisher_->publish(cmd_vel_msg); // publisht the computed velocity command(cmd_vel_msg)
+}
+
+rcl_interfaces::msg::SetParametersResult
+PersonFollower::dynamicParametersCallback(std::vector<rclcpp::Parameter> parameters)
+{
+  std::lock_guard<std::recursive_mutex> cfl(mutex_);
+  rcl_interfaces::msg::SetParametersResult result;
+  for (auto parameter : parameters)
+  {
+    const auto &param_type = parameter.get_type();
+    const auto &param_name = parameter.get_name();
+    if (param_type == ParameterType::PARAMETER_DOUBLE)
+    {
+      if (param_name == "following_distance")
+      {
+        following_distance_ = parameter.as_double();
+        if (following_distance_ < 0.0)
+        {
+          RCLCPP_WARN(this->get_logger(), "You've set following_distance to be negative,"
+                                          " this isn't allowed, so the alpha1 will be set to be zero.");
+          following_distance_ = 0.0;
+        }
+      }
+      /*
+      TODO TASK 3 - MILESTONE # 2.1
+      Check whether other parameters should be updated and if yes,
+      store the updated value to the class variables defined in TASK 1 (Milestone # 1.1)
+      */
+      if (param_name == "following_angle")
+      {
+        following_angle_ = parameter.as_double();
+      }
+      if (param_name == "angle_control_gain")
+      {
+        angle_control_gain_ = parameter.as_double();
+        if (angle_control_gain_ < 0.0)
+        {
+          RCLCPP_WARN(this->get_logger(), "You've set angle_control_gain to be negative,"
+                                          " this isn't allowed, so the value will be set to default.");
+          angle_control_gain_ = 1.0;
+        }
+      }
+      if (param_name == "distance_control_gain")
+      {
+        distance_control_gain_ = parameter.as_double();
+        if (distance_control_gain_ < 0.0)
+        {
+          RCLCPP_WARN(this->get_logger(), "You've set distance_control_gain_ to be negative,"
+                                          " this isn't allowed, so the value will be set to default.");
+          distance_control_gain_ = 0.5;
+        }
+      }
+    }
+  }
+  result.successful = true;
+  return result;
+}
+
+int main(int argc, char **argv)
+{
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<PersonFollower>());
+  rclcpp::shutdown();
+  return 0;
+}
