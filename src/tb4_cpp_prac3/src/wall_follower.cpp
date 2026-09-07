@@ -118,11 +118,16 @@ void WallFollower::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr sc
         NOTE: the four pillars of will be visible from the Lidar sensor, you have to remove the distance
         measurements of these four pillars by ignoring any measurement less than 0.2 meter.
     */
-    auto valid_distances = [](double a, double b)
+    auto valid_range = [scan_msg](float range)
     {
-        if (a < 0.2)
+        return std::isfinite(range) && range >= 0.2f && range < scan_msg->range_max;
+    };
+
+    auto valid_distances = [valid_range](double a, double b)
+    {
+        if (!valid_range(a))
             return false; // if a is less than 0.2, choose b
-        if (b < 0.2)
+        if (!valid_range(b))
             return true; // if b is less than 0.2, choose a
         return a < b;
     };

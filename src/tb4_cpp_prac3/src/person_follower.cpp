@@ -56,7 +56,6 @@ public:
         "/scan",
         rclcpp::SensorDataQoS(),
         std::bind(&PersonFollower::scan_callback, this, _1));
-    RCLCPP_INFO(this->get_logger(), "Subscribed to topic: %s", scan_subscriber_->get_topic_name());
   }
 
 private:
@@ -92,35 +91,22 @@ private:
 void PersonFollower::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr scan_msg)
 {
   std::lock_guard<std::recursive_mutex> cfl(mutex_);
-
-  // DEBUG: sensor frame + scan geometry — confirms sensor origin/frame and sweep params
-  RCLCPP_INFO(this->get_logger(),
-              "frame_id=%s angle_min=%.3f angle_max=%.3f angle_inc=%.5f range_min=%.3f range_max=%.3f ranges.size()=%zu",
-              scan_msg->header.frame_id.c_str(),
-              scan_msg->angle_min, scan_msg->angle_max, scan_msg->angle_increment,
-              scan_msg->range_min, scan_msg->range_max,
-              scan_msg->ranges.size());
   /*TODO TASKS
 
     MILESTONE #3.1 - Process the received scan_msg to get the location of the closest object in robot's environment.
       NOTE: the four pillars of will be visible from the Lidar sensor, you have to remove the distance
       measurements of these four pillars by ignoring any measurement less than 0.2 meter.
    */
-
-  auto raw_min = *std::min_element(scan_msg->ranges.begin(), scan_msg->ranges.end());
-  auto raw_max = *std::max_element(scan_msg->ranges.begin(), scan_msg->ranges.end());
-  RCLCPP_INFO(this->get_logger(), "raw_min=%.3f raw_max=%.3f", raw_min, raw_max);
-
-  int below_cutoff = std::count_if(scan_msg->ranges.begin(), scan_msg->ranges.end(),
-                                   [](float range)
-                                   { return range < 0.2f; });
-  RCLCPP_INFO(this->get_logger(), "below_cutoff_count=%d / %zu", below_cutoff, scan_msg->ranges.size());
-
-  auto valid_distances = [](double a, double b)
+  auto valid_range = [scan_msg](float range)
   {
-    if (a < 0.2)
+    return std::isfinite(range) && range >= 0.2f && range < scan_msg->range_max;
+  };
+
+  auto valid_distances = [valid_range](double a, double b)
+  {
+    if (!valid_range(a))
       return false; // if a is less than 0.2, choose b
-    if (b < 0.2)
+    if (!valid_range(b))
       return true; // if b is less than 0.2, choose a
     return a < b;
   };
@@ -133,17 +119,6 @@ void PersonFollower::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr 
   // Calculates the index of the minimum value in the ranges vector by finding the distance between the beginning of the vector and the iterator pointing to the minimum value.
   int min_index = std::distance(scan_msg->ranges.begin(), min_distance);
 
-  // DEBUG: sample a spread of ranges across the array, not just the min
-  {
-    size_t n = scan_msg->ranges.size();
-    RCLCPP_INFO(this->get_logger(),
-                "ranges[0]=%.3f ranges[%zu]=%.3f ranges[%zu]=%.3f ranges[last]=%.3f",
-                scan_msg->ranges[0],
-                n / 4, scan_msg->ranges[n / 4],
-                n / 2, scan_msg->ranges[n / 2],
-                scan_msg->ranges[n - 1]);
-  }
-
   /*
     MILESTONE #3.2. You have to calculate the bearing and the range of the closest object with respect to the robot frame. You have
     to check the LaserScan message definition, and how the Lidar sensor is mounted with respective to
@@ -151,11 +126,7 @@ void PersonFollower::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr 
     */
   double angle_L = scan_msg->angle_min + (min_index * scan_msg->angle_increment); // Lidar Frame angle
 
-  double angle_R = angle_L - PI / 2; // Robot Frame angle
-
-  angle_R = std::atan2(std::sin(angle_R), std::cos(angle_R)); // Normalize angle to [-pi, pi]
-
-  RCLCPP_INFO(this->get_logger(), "angle_L=%.3f angle_R=%.3f min_value=%.3f", angle_L, angle_R, min_value);
+  double angle_R = angle_L + PI / 2; // Robot Frame angle
 
   /*
     MILESTONE #3.3. Write a Person Follow Reactive Control that takes the bearing and range information of the closest
@@ -164,7 +135,7 @@ void PersonFollower::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr 
   */
   geometry_msgs::msg::Twist cmd_vel_msg;
   // Checks if the minimum value detected by the LiDAR is less than 12 meters. If true, it proceeds to calculate control commands based on this information; otherwise, it handles the case where no object is detected.
-  if (min_value >= 0.2 && min_value < 12)
+  if (min_value < 12)
   {
     // Assign angular and linear velocities
     cmd_vel_msg.angular.z = angle_control_gain_ * (angle_R - following_angle_);
@@ -174,8 +145,7 @@ void PersonFollower::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr 
   else
   {
     RCLCPP_INFO(this->get_logger(), "No Object is Detected");
-    cmd_vel_msg.linear.x = 0.0;  // stop the robot
-    cmd_vel_msg.angular.z = 0.0; // stop the robot
+    cmd_vel_msg.linear.x = 0.0; // stop the robot
   }
 
   cmd_vel_publisher_->publish(cmd_vel_msg); // publisht the computed velocity command(cmd_vel_msg)
