@@ -28,14 +28,14 @@ public:
         buffer_zone_desc.description = "A positive value used to determine whether the tracking control is on or off";
 
         // Declare parameters
-        this->declare_parameter<float>("following_angle", 0);
-        this->declare_parameter<float>("following_distance", 0.7);
+        this->declare_parameter<double>("following_angle", 0);
+        this->declare_parameter<double>("following_distance", 0.7);
         this->declare_parameter<int64_t>("wall_side", 1, wall_side_desc);
-        this->declare_parameter<float>("buffer_zone", 0.4, buffer_zone_desc);
-        this->declare_parameter<float>("forward_velocity", 0.4);
-        this->declare_parameter<float>("angle_control_gain_1", 1.0);
-        this->declare_parameter<float>("angle_control_gain_2", 1.0);
-        this->declare_parameter<float>("distance_control_gain", 0.5);
+        this->declare_parameter<double>("buffer_zone", 0.4, buffer_zone_desc);
+        this->declare_parameter<double>("forward_velocity", 0.4);
+        this->declare_parameter<double>("angle_control_gain_1", 1.0);
+        this->declare_parameter<double>("angle_control_gain_2", 1.0);
+        this->declare_parameter<double>("distance_control_gain", 0.5);
 
         // Get parameter values
         this->get_parameter("following_angle", following_angle_);
@@ -142,7 +142,9 @@ void WallFollower::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr sc
 
     */
 
-    float theta_o = scan_msg->angle_min + (min_index * scan_msg->angle_increment);
+    float theta = scan_msg->angle_min + (min_index * scan_msg->angle_increment);
+
+    float theta_o = theta + PI / 2;
 
     geometry_msgs::msg::Twist cmd_vel_msg;
 
@@ -306,6 +308,7 @@ WallFollower::dynamicParametersCallback(std::vector<rclcpp::Parameter> parameter
             }
         }
     }
+    result.successful = true;
     return result;
 }
 
