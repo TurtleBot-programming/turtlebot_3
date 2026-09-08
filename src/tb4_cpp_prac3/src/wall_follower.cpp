@@ -192,22 +192,22 @@ If min_value<12, the lidar sensor has a valid measurement.
             {
                 if (std::abs(theta_tilde) > PI / 10)
                 {
-                    omega = angle_control_gain_1_ * theta_tilde + angle_control_gain_2_ * min_value * std::sin(theta_tilde) / theta_tilde;
+                    omega = angle_control_gain_1_ * theta_tilde + angle_control_gain_2_ * (min_value - following_distance_) * std::sin(theta_tilde) / theta_tilde;
                 }
                 else
                 {
-                    omega = angle_control_gain_1_ * theta_tilde + angle_control_gain_2_ * min_value;
+                    omega = angle_control_gain_1_ * theta_tilde + angle_control_gain_2_ * (min_value - following_distance_);
                 }
             }
             else if (wall_side_ == -1) // wall on the right
             {
                 if (std::abs(theta_tilde) > PI / 10)
                 {
-                    omega = angle_control_gain_1_ * theta_tilde - angle_control_gain_2_ * min_value * std::sin(theta_tilde) / theta_tilde;
+                    omega = angle_control_gain_1_ * theta_tilde - angle_control_gain_2_ * (min_value - following_distance_) * std::sin(theta_tilde) / theta_tilde;
                 }
                 else
                 {
-                    omega = angle_control_gain_1_ * theta_tilde - angle_control_gain_2_ * min_value;
+                    omega = angle_control_gain_1_ * theta_tilde - angle_control_gain_2_ * (min_value - following_distance_);
                 }
             }
 
