@@ -73,7 +73,7 @@ public:
                 this, std::placeholders::_1));
 
         this->cmd_vel_publisher_ = this->create_publisher<geometry_msgs::msg::Twist>(
-            "/cmd_vel",
+            "/cmd_vel_unstamped",
             rclcpp::SystemDefaultsQoS());
         using namespace std::placeholders;
         this->scan_subscriber_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
