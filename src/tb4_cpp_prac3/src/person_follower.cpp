@@ -48,7 +48,7 @@ public:
 
     // Publisher for the topic /cmd_vel
     this->cmd_vel_publisher_ = this->create_publisher<geometry_msgs::msg::Twist>(
-        "/cmd_vel",
+        "/cmd_vel_unstamped",
         rclcpp::SystemDefaultsQoS());
     using namespace std::placeholders;
     // Subsriber to the /scan topic
